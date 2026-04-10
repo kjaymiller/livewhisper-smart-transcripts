@@ -44,7 +44,8 @@ def main(files):
             session.refresh(record)
 
             click.secho(
-                f"\n⏳ Starting transcription for '{file_path.name}'...", fg="yellow"
+                f"\n⏳ Starting transcription for '{file_path.name}' (ID: {record.id})...",
+                fg="yellow",
             )
 
             async def run_task():
@@ -58,13 +59,12 @@ def main(files):
                 with Progress(
                     SpinnerColumn(),
                     TextColumn("[progress.description]{task.description}"),
-                    BarColumn(),
-                    TaskProgressColumn(),
                     transient=True,
                 ) as progress:
-                    # Initially, we don't know total chunks
+                    # We don't have chunks anymore, we have a continuous stream.
                     progress_task_id = progress.add_task(
-                        description="Preparing chunks...", total=100, completed=0
+                        description=f"[ID: {record.id}] Connecting to streaming API...",
+                        total=None,
                     )
 
                     while not task.done():
@@ -74,16 +74,24 @@ def main(files):
                             )
                             if progress_data:
                                 p_dict = json.loads(progress_data)
-                                current = p_dict.get("current", 0)
-                                total = p_dict.get("total", 0)
+                                text = p_dict.get("text", "")
 
-                                if total > 0:
-                                    percent_complete = (current / total) * 100
-                                    progress.update(
-                                        progress_task_id,
-                                        description=f"Processing chunk {current} of {total}...",
-                                        completed=percent_complete,
+                                # Show a live sample of the transcription
+                                preview = ""
+                                if text:
+                                    clean_text = text.replace("\n", " ")
+                                    preview = (
+                                        clean_text[-50:]
+                                        if len(clean_text) > 50
+                                        else clean_text
                                     )
+
+                                progress.update(
+                                    progress_task_id,
+                                    description=f"[ID: {record.id}] Transcribing: ...{preview}"
+                                    if preview
+                                    else f"[ID: {record.id}] Transcribing...",
+                                )
                         except Exception:
                             pass  # Safely ignore JSON or connection errors during polling
 

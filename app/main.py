@@ -153,6 +153,26 @@ def update_transcription(
     return {"id": record.id, "message": "Correction and diffs added"}
 
 
+@app.get("/api/transcriptions/active")
+def get_active_transcriptions():
+    """Return all in-progress transcriptions stored in Valkey with a text sample."""
+    active = []
+    keys = vk.keys("transcription_progress:*")
+    for key in keys:
+        try:
+            record_id = int(key.split(":")[-1])
+            data = vk.get(key)
+            if data:
+                parsed = json.loads(data)
+                text = parsed.get("text", "")
+                # Show the last 200 characters as a sample
+                sample = text[-200:] if text else ""
+                active.append({"id": record_id, "sample": sample})
+        except Exception:
+            continue
+    return active
+
+
 @app.get("/api/transcriptions/{record_id}")
 def get_transcription(record_id: int, session: Session = Depends(get_session)):
     t = session.get(Transcription, record_id)
