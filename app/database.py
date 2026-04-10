@@ -1,18 +1,43 @@
-from typing import Optional
+from typing import Optional, List
 from datetime import datetime
-from sqlmodel import Field, SQLModel, create_engine, Session
+from sqlmodel import Field, SQLModel, create_engine, Session, Relationship
+import os
 
 
-class TranscriptionRecord(SQLModel, table=True):
+class Correction(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    transcription_id: Optional[int] = Field(
+        default=None, foreign_key="transcription.id"
+    )
+    corrected_text: str
+    status: str = Field(default="pending")
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+    transcription: Optional["Transcription"] = Relationship(
+        back_populates="corrections"
+    )
+
+
+class Diff(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    transcription_id: Optional[int] = Field(
+        default=None, foreign_key="transcription.id"
+    )
+    diff_data: str
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+    transcription: Optional["Transcription"] = Relationship(back_populates="diffs")
+
+
+class Transcription(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     filename: str
     original_text: str
-    corrected_text: Optional[str] = None
     created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
 
+    corrections: List[Correction] = Relationship(back_populates="transcription")
+    diffs: List[Diff] = Relationship(back_populates="transcription")
 
-import os
 
 # Connect to the local Postgres database running via Docker
 DATABASE_URL = os.environ.get(
