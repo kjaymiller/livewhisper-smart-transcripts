@@ -17,9 +17,9 @@ if lsof -Pi :$WLK_PORT -sTCP:LISTEN -t >/dev/null; then
 else
 	echo "[1/2] Starting WhisperLiveKit (MLX Backend) on port $WLK_PORT..."
 	# We use pipx or global uv to ensure wlk is available, or install it if missing
-	uv tool install whisperlivekit --with python-multipart --with mlx-whisper 2>/dev/null || true
+	uv tool install whisperlivekit --with python-multipart --with mlx-whisper --with "git+https://github.com/NVIDIA/NeMo.git@main#egg=nemo_toolkit[asr]" 2>/dev/null || true
 
-	uv run wlk --host 0.0.0.0 --port $WLK_PORT --backend mlx-whisper --model base --language en >wlk.log 2>&1 &
+	uv run wlk --host 0.0.0.0 --port $WLK_PORT --backend mlx-whisper --model base --language en --diarization >wlk.log 2>&1 &
 	WLK_PID=$!
 	echo "WhisperLiveKit started with PID $WLK_PID. Logging to wlk.log."
 
