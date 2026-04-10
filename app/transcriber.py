@@ -1,15 +1,20 @@
 import os
-import re
+import json
 import asyncio
 import httpx
 import subprocess
 import tempfile
-import click
 from pathlib import Path
 from sqlmodel import Session, select
+import valkey
+
 from app.database import engine, Transcription, Diff
 
 WLK_URL = os.environ.get("WLK_URL", "http://localhost:9090/v1/audio/transcriptions")
+VALKEY_URL = os.environ.get("VALKEY_URL", "redis://localhost:6379/0")
+
+# Setup Valkey client
+vk = valkey.from_url(VALKEY_URL, decode_responses=True)
 
 
 def get_audio_duration(file_path: Path) -> float:
@@ -45,8 +50,6 @@ def split_audio(file_path: Path, chunk_duration: int = 600) -> list[Path]:
     chunks = []
     temp_dir = Path(tempfile.mkdtemp(prefix="wlk_chunks_"))
 
-    # Use ffmpeg to split the file
-    # Example: ffmpeg -i input.mp3 -f segment -segment_time 600 -c copy output_%03d.mp3
     ext = file_path.suffix
     output_pattern = str(temp_dir / f"chunk_%03d{ext}")
 
@@ -121,25 +124,45 @@ async def async_transcribe_chunk(
 async def background_transcribe_task(
     record_id: int, file_path: Path, delete_file_after: bool = False
 ):
-    """Background task to chunk and transcribe audio, updating the database record."""
+    """Background task to chunk and transcribe audio, tracking progress in Valkey."""
     try:
         with Session(engine) as session:
             prompt_text = build_prompt_from_corrections(session)
 
         chunks = split_audio(file_path, chunk_duration=600)  # 10 minute chunks
+        total_chunks = len(chunks)
+
+        # Initialize progress in Valkey (expires in 24 hours just in case)
+        vk.setex(
+            f"transcription_progress:{record_id}",
+            86400,
+            json.dumps({"current": 0, "total": total_chunks, "text": ""}),
+        )
 
         full_transcription = []
 
         async with httpx.AsyncClient(timeout=36000.0) as client:
-            for chunk in chunks:
+            for idx, chunk in enumerate(chunks):
+                # Update current chunk progress
+                vk.setex(
+                    f"transcription_progress:{record_id}",
+                    86400,
+                    json.dumps(
+                        {
+                            "current": idx + 1,
+                            "total": total_chunks,
+                            "text": " ".join(full_transcription).strip(),
+                        }
+                    ),
+                )
+
                 text = await async_transcribe_chunk(client, chunk, prompt_text)
                 if text:
                     full_transcription.append(text)
-                # Note: We could update prompt_text here iteratively if we wanted,
-                # but static prompt is fine for now.
 
         final_text = " ".join(full_transcription).strip()
 
+        # Update final text in the Database
         with Session(engine) as session:
             record = session.get(Transcription, record_id)
             if record:
@@ -191,3 +214,6 @@ async def background_transcribe_task(
                 file_path.unlink()
             except:
                 pass
+
+        # Cleanup valkey progress
+        vk.delete(f"transcription_progress:{record_id}")
