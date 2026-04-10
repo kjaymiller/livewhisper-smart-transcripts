@@ -41,7 +41,7 @@ class Transcription(SQLModel, table=True):
 
 # Connect to the local Postgres database running via Docker
 DATABASE_URL = os.environ.get(
-    "DATABASE_URL", "postgresql://postgres:password@localhost:5432/transcriptions"
+    "DATABASE_URL", "postgresql://postgres:password@localhost:5432/transcripts"
 )
 engine = create_engine(DATABASE_URL)
 
