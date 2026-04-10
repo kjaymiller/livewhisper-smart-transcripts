@@ -33,7 +33,8 @@ class Correction(SQLModel, table=True):
 class Transcription(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     filename: str
-    original_text: str
+    original_text: str = Field(default="")
+    status: str = Field(default="completed")
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
     corrections: List[Correction] = Relationship(back_populates="transcription")

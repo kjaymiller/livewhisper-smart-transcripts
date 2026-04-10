@@ -1,10 +1,11 @@
 import os
+import shutil
 from pathlib import Path
 from datetime import datetime
 from typing import Optional
 import difflib
 
-from fastapi import FastAPI, Depends, HTTPException
+from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, BackgroundTasks
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
@@ -17,15 +18,18 @@ from app.database import (
     Correction,
     Diff,
 )
+from app.transcriber import background_transcribe_task
 
 app = FastAPI()
 
 STATIC_DIR = Path(__file__).parent / "static"
+TEMP_DIR = Path("/tmp/conduit_audio")
 
 
 @app.on_event("startup")
 def on_startup():
     create_db_and_tables()
+    TEMP_DIR.mkdir(exist_ok=True, parents=True)
 
 
 # Ensure static directory exists
@@ -36,6 +40,49 @@ app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 @app.get("/")
 def read_index():
     return FileResponse(str(STATIC_DIR / "index.html"))
+
+
+@app.post("/api/transcribe")
+async def transcribe_file(
+    background_tasks: BackgroundTasks,
+    file: UploadFile = File(...),
+    session: Session = Depends(get_session),
+):
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="No file uploaded")
+
+    # Save file temporarily
+    file_path = TEMP_DIR / file.filename
+    with open(file_path, "wb") as buffer:
+        shutil.copyfileobj(file.file, buffer)
+
+    # Create database record with "processing" status
+    record = Transcription(
+        filename=file.filename, original_text="", status="processing"
+    )
+    session.add(record)
+    session.commit()
+    session.refresh(record)
+
+    # Trigger background task
+    background_tasks.add_task(
+        background_transcribe_task, record.id, file_path, delete_file_after=True
+    )
+
+    return {"id": record.id, "message": "Transcription started in background"}
+
+
+@app.get("/api/transcriptions/{record_id}/status")
+def get_transcription_status(record_id: int, session: Session = Depends(get_session)):
+    record = session.get(Transcription, record_id)
+    if not record:
+        raise HTTPException(status_code=404, detail="Transcription not found")
+
+    return {
+        "id": record.id,
+        "status": record.status,
+        "original_text": record.original_text if record.status == "completed" else None,
+    }
 
 
 class CorrectionUpdate(BaseModel):

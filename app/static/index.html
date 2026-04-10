@@ -17,6 +17,9 @@
         .history-item:last-child { border-bottom: none; }
         .text-original { color: #555; background: #fff0f0; padding: 5px; border-radius: 3px; }
         .text-corrected { color: #333; background: #f0fff0; padding: 5px; border-radius: 3px; font-weight: bold; }
+        .status-badge { display: inline-block; padding: 3px 8px; border-radius: 12px; font-size: 12px; font-weight: bold; }
+        .status-processing { background: #fff3cd; color: #856404; }
+        .status-completed { background: #d4edda; color: #155724; }
     </style>
 </head>
 <body>
@@ -29,7 +32,7 @@
         <input type="file" id="audioFile" accept="audio/*">
         <br><br>
         <button id="uploadBtn" onclick="uploadAudio()">Transcribe File</button>
-        <div id="loader" class="loader">Uploading and transcribing... This may take a moment.</div>
+        <div id="loader" class="loader">Uploading and transcribing... This may take a moment. <span id="pollStatus"></span></div>
     </div>
 
     <div id="editorCard" class="card" style="display: none;">
@@ -52,6 +55,7 @@
 
     <script>
         let currentRecordId = null;
+        let pollInterval = null;
 
         async function uploadAudio() {
             const fileInput = document.getElementById('audioFile');
@@ -61,10 +65,12 @@
             const btn = document.getElementById('uploadBtn');
             const loader = document.getElementById('loader');
             const editorCard = document.getElementById('editorCard');
+            const pollStatus = document.getElementById('pollStatus');
 
             btn.disabled = true;
             loader.style.display = 'block';
             editorCard.style.display = 'none';
+            pollStatus.innerText = "Initiating...";
 
             const formData = new FormData();
             formData.append('file', file);
@@ -80,16 +86,53 @@
                 const data = await response.json();
                 currentRecordId = data.id;
                 
-                document.getElementById('originalText').innerText = data.original_text;
-                document.getElementById('correctedText').value = data.original_text;
+                pollStatus.innerText = "Processing in background...";
+                loadHistory(); // Refresh history list to show pending
                 
-                editorCard.style.display = 'block';
-                loadHistory(); // Refresh history list
+                // Start polling for status
+                pollInterval = setInterval(() => checkStatus(currentRecordId), 3000);
+                
             } catch (error) {
-                alert('Error transcribing audio: ' + error.message);
-            } finally {
+                alert('Error starting transcription: ' + error.message);
                 btn.disabled = false;
                 loader.style.display = 'none';
+            }
+        }
+        
+        async function checkStatus(id) {
+            try {
+                const response = await fetch(`/api/transcriptions/${id}/status`);
+                if (!response.ok) {
+                    // Could be 404 if failed and deleted
+                    clearInterval(pollInterval);
+                    const btn = document.getElementById('uploadBtn');
+                    const loader = document.getElementById('loader');
+                    btn.disabled = false;
+                    loader.style.display = 'none';
+                    alert("Transcription failed or was removed.");
+                    loadHistory();
+                    return;
+                }
+                
+                const data = await response.json();
+                
+                if (data.status === 'completed') {
+                    clearInterval(pollInterval);
+                    const btn = document.getElementById('uploadBtn');
+                    const loader = document.getElementById('loader');
+                    const editorCard = document.getElementById('editorCard');
+                    
+                    btn.disabled = false;
+                    loader.style.display = 'none';
+                    
+                    document.getElementById('originalText').innerText = data.original_text || "(Empty Transcription)";
+                    document.getElementById('correctedText').value = data.original_text || "";
+                    
+                    editorCard.style.display = 'block';
+                    loadHistory();
+                }
+            } catch (error) {
+                console.error("Polling error:", error);
             }
         }
 
@@ -129,14 +172,28 @@
                     const div = document.createElement('div');
                     div.className = 'history-item';
                     
-                    const correctedHtml = record.corrected_text ? 
-                        `<div class="text-corrected">Corrected: ${record.corrected_text}</div>` : 
-                        `<div style="color: #999; font-style: italic;">No corrections yet</div>`;
+                    const statusClass = record.status === 'processing' ? 'status-processing' : 'status-completed';
+                    const statusText = record.status === 'processing' ? 'Processing...' : 'Completed';
+                    const badgeHtml = `<span class="status-badge ${statusClass}">${statusText}</span>`;
+                    
+                    let contentHtml = '';
+                    if (record.status === 'completed') {
+                        const original = record.original_text || "(Empty Transcription)";
+                        const correctedHtml = record.corrected_text ? 
+                            `<div class="text-corrected">Corrected: ${record.corrected_text}</div>` : 
+                            `<div style="color: #999; font-style: italic;">No corrections yet</div>`;
+                        
+                        contentHtml = `
+                            <div class="text-original">Original: ${original}</div>
+                            ${correctedHtml}
+                        `;
+                    } else {
+                        contentHtml = `<div style="color: #666; font-style: italic;">Audio is currently being transcribed in the background...</div>`;
+                    }
 
                     div.innerHTML = `
-                        <h3>File: ${record.filename}</h3>
-                        <div class="text-original">Original: ${record.original_text}</div>
-                        ${correctedHtml}
+                        <h3>File: ${record.filename} ${badgeHtml}</h3>
+                        ${contentHtml}
                     `;
                     list.appendChild(div);
                 });
