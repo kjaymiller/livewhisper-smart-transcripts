@@ -23,6 +23,7 @@ dependencies = [
   "psycopg2-binary",
   "valkey>=6.1.1",
   "websockets>=16.0",
+  "whisperlivekit>=0.2.20.post1",
 ]
 
 [project.scripts]
