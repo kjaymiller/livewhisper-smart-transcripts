@@ -22,6 +22,7 @@ dependencies = [
   "httpx",
   "psycopg2-binary",
   "valkey>=6.1.1",
+  "websockets>=16.0",
 ]
 
 [project.scripts]
