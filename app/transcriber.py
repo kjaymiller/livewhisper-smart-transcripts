@@ -100,7 +100,7 @@ async def async_transcribe_chunk(
     """Sends a single chunk to the WhisperLiveKit API."""
     try:
         with open(chunk_path, "rb") as f:
-            data = {"model": "base"}
+            data = {"model": "base", "response_format": "verbose_json"}
             if prompt_text:
                 data["prompt"] = prompt_text
 
@@ -112,7 +112,25 @@ async def async_transcribe_chunk(
 
             if response.status_code == 200:
                 result = response.json()
-                return result.get("text", "")
+                segments = result.get("segments", [])
+
+                # Format text with speaker labels if available
+                text_parts = []
+                for seg in segments:
+                    text = seg.get("text", "").strip()
+                    speaker = seg.get("speaker")
+
+                    if speaker is not None and speaker != -2:
+                        # Append the speaker ID label, format: "Speaker 1: text"
+                        text_parts.append(f"[Speaker {speaker}]: {text}")
+                    else:
+                        text_parts.append(text)
+
+                # If no segments but text exists, fallback
+                if not text_parts and result.get("text"):
+                    return result.get("text", "")
+
+                return "\n\n".join(text_parts)
             else:
                 print(f"API Error ({response.status_code}): {response.text}")
                 return ""

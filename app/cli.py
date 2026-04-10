@@ -1,11 +1,22 @@
 import os
+import json
 import asyncio
 import click
 from pathlib import Path
 from sqlmodel import Session
+import valkey
 from app.database import Transcription, engine
-from rich.progress import Progress, SpinnerColumn, TextColumn
+from rich.progress import (
+    Progress,
+    SpinnerColumn,
+    TextColumn,
+    BarColumn,
+    TaskProgressColumn,
+)
 from app.transcriber import background_transcribe_task
+
+VALKEY_URL = os.environ.get("VALKEY_URL", "redis://localhost:6379/0")
+vk = valkey.from_url(VALKEY_URL, decode_responses=True)
 
 
 @click.command(
@@ -37,18 +48,48 @@ def main(files):
             )
 
             async def run_task():
+                # We'll run the background task but also spawn a polling loop to update the rich progress bar
+                task = asyncio.create_task(
+                    background_transcribe_task(
+                        record.id, file_path, delete_file_after=False
+                    )
+                )
+
                 with Progress(
                     SpinnerColumn(),
                     TextColumn("[progress.description]{task.description}"),
+                    BarColumn(),
+                    TaskProgressColumn(),
                     transient=True,
                 ) as progress:
-                    progress.add_task(
-                        description="Processing chunks (auto-splitting if >10m)...",
-                        total=None,
+                    # Initially, we don't know total chunks
+                    progress_task_id = progress.add_task(
+                        description="Preparing chunks...", total=100, completed=0
                     )
-                    await background_transcribe_task(
-                        record.id, file_path, delete_file_after=False
-                    )
+
+                    while not task.done():
+                        try:
+                            progress_data = vk.get(
+                                f"transcription_progress:{record.id}"
+                            )
+                            if progress_data:
+                                p_dict = json.loads(progress_data)
+                                current = p_dict.get("current", 0)
+                                total = p_dict.get("total", 0)
+
+                                if total > 0:
+                                    percent_complete = (current / total) * 100
+                                    progress.update(
+                                        progress_task_id,
+                                        description=f"Processing chunk {current} of {total}...",
+                                        completed=percent_complete,
+                                    )
+                        except Exception:
+                            pass  # Safely ignore JSON or connection errors during polling
+
+                        await asyncio.sleep(1)  # Poll every second
+
+                await task  # Ensure it finishes
 
             asyncio.run(run_task())
 

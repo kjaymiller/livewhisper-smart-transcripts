@@ -21,6 +21,7 @@ dependencies = [
   "sqlmodel",
   "httpx",
   "psycopg2-binary",
+  "valkey>=6.1.1",
 ]
 
 [project.scripts]

@@ -1,4 +1,5 @@
 import os
+import json
 import shutil
 from pathlib import Path
 from datetime import datetime
@@ -10,6 +11,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from sqlmodel import Session, select
+import valkey
 
 from app.database import (
     create_db_and_tables,
@@ -24,6 +26,9 @@ app = FastAPI()
 
 STATIC_DIR = Path(__file__).parent / "static"
 TEMP_DIR = Path("/tmp/conduit_audio")
+
+VALKEY_URL = os.environ.get("VALKEY_URL", "redis://localhost:6379/0")
+vk = valkey.from_url(VALKEY_URL, decode_responses=True)
 
 
 @app.on_event("startup")
@@ -78,11 +83,25 @@ def get_transcription_status(record_id: int, session: Session = Depends(get_sess
     if not record:
         raise HTTPException(status_code=404, detail="Transcription not found")
 
-    return {
+    result = {
         "id": record.id,
         "status": record.status,
-        "original_text": record.original_text if record.status == "completed" else None,
     }
+
+    if record.status == "completed":
+        result["original_text"] = record.original_text
+    elif record.status == "processing":
+        try:
+            progress_data = vk.get(f"transcription_progress:{record_id}")
+            if progress_data:
+                progress = json.loads(progress_data)
+                result["current_chunk"] = progress.get("current", 0)
+                result["total_chunks"] = progress.get("total", 0)
+                result["partial_text"] = progress.get("text", "")
+        except Exception as e:
+            pass
+
+    return result
 
 
 class CorrectionUpdate(BaseModel):
@@ -149,15 +168,19 @@ def list_transcriptions(session: Session = Depends(get_session)):
             else None
         )
 
-        results.append(
-            {
-                "id": t.id,
-                "filename": t.filename,
-                "original_text": t.original_text,
-                "corrected_text": latest_correction.corrected_text
-                if latest_correction
-                else None,
-                "created_at": t.created_at,
-            }
-        )
+        record_data = {
+            "id": t.id,
+            "filename": t.filename,
+            "status": t.status,
+            "created_at": t.created_at,
+        }
+
+        if t.status == "completed":
+            record_data["original_text"] = t.original_text
+            record_data["corrected_text"] = (
+                latest_correction.corrected_text if latest_correction else None
+            )
+
+        results.append(record_data)
+
     return results

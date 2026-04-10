@@ -20,6 +20,9 @@
         .status-badge { display: inline-block; padding: 3px 8px; border-radius: 12px; font-size: 12px; font-weight: bold; }
         .status-processing { background: #fff3cd; color: #856404; }
         .status-completed { background: #d4edda; color: #155724; }
+        .progress-bar { width: 100%; background-color: #e9ecef; border-radius: .25rem; overflow: hidden; margin-top: 10px; display: none; }
+        .progress-bar-inner { background-color: #0066cc; color: white; text-align: center; white-space: nowrap; transition: width .6s ease; padding: 2px 0; font-size: 12px; font-weight: bold; width: 0%; }
+        .partial-text { margin-top: 10px; font-size: 0.9em; color: #666; font-style: italic; max-height: 100px; overflow-y: auto; border-left: 3px solid #ccc; padding-left: 10px; display: none; }
     </style>
 </head>
 <body>
@@ -32,7 +35,11 @@
         <input type="file" id="audioFile" accept="audio/*">
         <br><br>
         <button id="uploadBtn" onclick="uploadAudio()">Transcribe File</button>
-        <div id="loader" class="loader">Uploading and transcribing... This may take a moment. <span id="pollStatus"></span></div>
+        <div id="loader" class="loader">Uploading and transcribing... <span id="pollStatus"></span></div>
+        <div id="progressBar" class="progress-bar">
+            <div id="progressBarInner" class="progress-bar-inner">0%</div>
+        </div>
+        <div id="partialText" class="partial-text"></div>
     </div>
 
     <div id="editorCard" class="card" style="display: none;">
@@ -66,11 +73,18 @@
             const loader = document.getElementById('loader');
             const editorCard = document.getElementById('editorCard');
             const pollStatus = document.getElementById('pollStatus');
+            const progressBar = document.getElementById('progressBar');
+            const progressBarInner = document.getElementById('progressBarInner');
+            const partialText = document.getElementById('partialText');
 
             btn.disabled = true;
             loader.style.display = 'block';
             editorCard.style.display = 'none';
             pollStatus.innerText = "Initiating...";
+            progressBar.style.display = 'none';
+            progressBarInner.style.width = '0%';
+            progressBarInner.innerText = '0%';
+            partialText.style.display = 'none';
 
             const formData = new FormData();
             formData.append('file', file);
@@ -90,7 +104,7 @@
                 loadHistory(); // Refresh history list to show pending
                 
                 // Start polling for status
-                pollInterval = setInterval(() => checkStatus(currentRecordId), 3000);
+                pollInterval = setInterval(() => checkStatus(currentRecordId), 2000);
                 
             } catch (error) {
                 alert('Error starting transcription: ' + error.message);
@@ -107,8 +121,12 @@
                     clearInterval(pollInterval);
                     const btn = document.getElementById('uploadBtn');
                     const loader = document.getElementById('loader');
+                    const progressBar = document.getElementById('progressBar');
+                    const partialText = document.getElementById('partialText');
                     btn.disabled = false;
                     loader.style.display = 'none';
+                    progressBar.style.display = 'none';
+                    partialText.style.display = 'none';
                     alert("Transcription failed or was removed.");
                     loadHistory();
                     return;
@@ -116,14 +134,40 @@
                 
                 const data = await response.json();
                 
-                if (data.status === 'completed') {
+                if (data.status === 'processing') {
+                    const pollStatus = document.getElementById('pollStatus');
+                    const progressBar = document.getElementById('progressBar');
+                    const progressBarInner = document.getElementById('progressBarInner');
+                    const partialText = document.getElementById('partialText');
+                    
+                    if (data.total_chunks > 0) {
+                        progressBar.style.display = 'block';
+                        const percent = Math.round((data.current_chunk / data.total_chunks) * 100);
+                        progressBarInner.style.width = `${percent}%`;
+                        progressBarInner.innerText = `Chunk ${data.current_chunk} of ${data.total_chunks} (${percent}%)`;
+                        pollStatus.innerText = "Processing chunks...";
+                    }
+                    
+                    if (data.partial_text && data.partial_text.length > 0) {
+                        partialText.style.display = 'block';
+                        // Show just the end of the text if it's very long
+                        const text = data.partial_text;
+                        const displayLength = 300;
+                        partialText.innerText = text.length > displayLength ? '...' + text.substring(text.length - displayLength) : text;
+                        partialText.scrollTop = partialText.scrollHeight;
+                    }
+                } else if (data.status === 'completed') {
                     clearInterval(pollInterval);
                     const btn = document.getElementById('uploadBtn');
                     const loader = document.getElementById('loader');
                     const editorCard = document.getElementById('editorCard');
+                    const progressBar = document.getElementById('progressBar');
+                    const partialText = document.getElementById('partialText');
                     
                     btn.disabled = false;
                     loader.style.display = 'none';
+                    progressBar.style.display = 'none';
+                    partialText.style.display = 'none';
                     
                     document.getElementById('originalText').innerText = data.original_text || "(Empty Transcription)";
                     document.getElementById('correctedText').value = data.original_text || "";
