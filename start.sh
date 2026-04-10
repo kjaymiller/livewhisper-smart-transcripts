@@ -25,9 +25,6 @@ else
 
 	# Wait a moment for WLK to initialize
 	sleep 3
-
-	# Set up trap to kill WLK when script exits
-	trap "echo 'Stopping WhisperLiveKit server...'; kill $WLK_PID" EXIT
 fi
 
 APP_PORT=${APP_PORT:-8000}
@@ -35,4 +32,4 @@ APP_PORT=${APP_PORT:-8000}
 # 2. Start PostgreSQL and FastAPI Web App via Docker Compose
 echo "[2/2] Starting Database and Web Application via Docker Compose..."
 echo "Building and starting containers... (Web App will be at http://localhost:${APP_PORT})"
-APP_PORT=${APP_PORT} docker compose up --build
+APP_PORT=${APP_PORT} docker compose up --build -d
