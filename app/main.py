@@ -153,6 +153,52 @@ def update_transcription(
     return {"id": record.id, "message": "Correction and diffs added"}
 
 
+@app.get("/api/transcriptions/{record_id}")
+def get_transcription(record_id: int, session: Session = Depends(get_session)):
+    t = session.get(Transcription, record_id)
+    if not t:
+        raise HTTPException(status_code=404, detail="Transcription not found")
+
+    corrections = [c for c in t.corrections if c.status == "accepted"]
+    latest_correction = (
+        sorted(corrections, key=lambda x: x.created_at, reverse=True)[0]
+        if corrections
+        else None
+    )
+
+    record_data = {
+        "id": t.id,
+        "filename": t.filename,
+        "status": t.status,
+        "created_at": t.created_at,
+    }
+
+    if t.status == "completed":
+        record_data["original_text"] = t.original_text
+        record_data["corrected_text"] = (
+            latest_correction.corrected_text if latest_correction else None
+        )
+
+    return record_data
+
+
+@app.delete("/api/transcriptions/{record_id}")
+def delete_transcription(record_id: int, session: Session = Depends(get_session)):
+    record = session.get(Transcription, record_id)
+    if not record:
+        raise HTTPException(status_code=404, detail="Transcription not found")
+
+    # Manually delete related corrections and diffs because we didn't setup cascade deletes
+    for correction in record.corrections:
+        for diff in correction.diffs:
+            session.delete(diff)
+        session.delete(correction)
+
+    session.delete(record)
+    session.commit()
+    return {"message": "Transcription deleted successfully"}
+
+
 @app.get("/api/transcriptions")
 def list_transcriptions(session: Session = Depends(get_session)):
     transcriptions = session.exec(

@@ -15,14 +15,22 @@
         h1, h2, h3 { color: #333; }
         .history-item { border-bottom: 1px solid #eee; padding-bottom: 15px; margin-bottom: 15px; }
         .history-item:last-child { border-bottom: none; }
-        .text-original { color: #555; background: #fff0f0; padding: 5px; border-radius: 3px; }
-        .text-corrected { color: #333; background: #f0fff0; padding: 5px; border-radius: 3px; font-weight: bold; }
+        .text-original { color: #555; background: #fff0f0; padding: 5px; border-radius: 3px; max-height: 200px; overflow-y: auto; }
+        .text-corrected { color: #333; background: #f0fff0; padding: 5px; border-radius: 3px; font-weight: bold; max-height: 200px; overflow-y: auto; }
         .status-badge { display: inline-block; padding: 3px 8px; border-radius: 12px; font-size: 12px; font-weight: bold; }
         .status-processing { background: #fff3cd; color: #856404; }
         .status-completed { background: #d4edda; color: #155724; }
         .progress-bar { width: 100%; background-color: #e9ecef; border-radius: .25rem; overflow: hidden; margin-top: 10px; display: none; }
         .progress-bar-inner { background-color: #0066cc; color: white; text-align: center; white-space: nowrap; transition: width .6s ease; padding: 2px 0; font-size: 12px; font-weight: bold; width: 0%; }
         .partial-text { margin-top: 10px; font-size: 0.9em; color: #666; font-style: italic; max-height: 100px; overflow-y: auto; border-left: 3px solid #ccc; padding-left: 10px; display: none; }
+        .btn-edit { background-color: #28a745; margin-right: 10px; }
+        .btn-edit:hover { background-color: #218838; }
+        .btn-delete { background-color: #dc3545; }
+        .btn-delete:hover { background-color: #c82333; }
+        .transcript-content { display: none; margin-top: 15px; }
+        .btn-toggle { background-color: #6c757d; margin-right: 10px; }
+        .btn-toggle:hover { background-color: #5a6268; }
+        .header-actions { display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; }
     </style>
 </head>
 <body>
@@ -45,7 +53,7 @@
     <div id="editorCard" class="card" style="display: none;">
         <h2>Review and Correct</h2>
         <p><strong>Original Transcription:</strong></p>
-        <div id="originalText" style="padding: 10px; background: #f9f9f9; border-left: 4px solid #0066cc; margin-bottom: 15px;"></div>
+        <div id="originalText" style="padding: 10px; background: #f9f9f9; border-left: 4px solid #0066cc; margin-bottom: 15px; max-height: 300px; overflow-y: auto;"></div>
         
         <p><strong>Correction:</strong></p>
         <textarea id="correctedText" placeholder="Edit the text to correct any mistakes..."></textarea>
@@ -55,8 +63,14 @@
     </div>
 
     <div class="card">
-        <h2>Past Transcriptions</h2>
-        <button onclick="loadHistory()" style="margin-bottom: 15px;">Refresh History</button>
+        <div class="header-actions">
+            <h2 style="margin: 0;">Past Transcriptions</h2>
+            <div>
+                <button onclick="expandAll()" class="btn-toggle">Expand All</button>
+                <button onclick="collapseAll()" class="btn-toggle">Collapse All</button>
+                <button onclick="loadHistory()">Refresh</button>
+            </div>
+        </div>
         <div id="historyList"></div>
     </div>
 
@@ -180,6 +194,76 @@
             }
         }
 
+        async function editTranscription(id) {
+            try {
+                const response = await fetch(`/api/transcriptions/${id}`);
+                if (!response.ok) throw new Error('Failed to fetch transcription');
+                
+                const data = await response.json();
+                
+                currentRecordId = data.id;
+                
+                const editorCard = document.getElementById('editorCard');
+                
+                document.getElementById('originalText').innerText = data.original_text || "(Empty Transcription)";
+                document.getElementById('correctedText').value = data.corrected_text || data.original_text || "";
+                
+                editorCard.style.display = 'block';
+                
+                // Scroll to editor
+                editorCard.scrollIntoView({ behavior: 'smooth' });
+                
+            } catch (error) {
+                alert('Error loading transcription for editing: ' + error.message);
+            }
+        }
+
+        async function deleteTranscription(id) {
+            if (!confirm('Are you sure you want to delete this transcription? This cannot be undone.')) {
+                return;
+            }
+            
+            try {
+                const response = await fetch(`/api/transcriptions/${id}`, {
+                    method: 'DELETE'
+                });
+                
+                if (!response.ok) throw new Error('Failed to delete');
+                
+                // If we're currently editing the deleted record, hide the editor
+                if (currentRecordId === id) {
+                    currentRecordId = null;
+                    document.getElementById('editorCard').style.display = 'none';
+                }
+                
+                loadHistory();
+            } catch (error) {
+                alert('Error deleting transcription: ' + error.message);
+            }
+        }
+
+        function toggleTranscript(id) {
+            const content = document.getElementById(`content-${id}`);
+            const btn = document.getElementById(`toggle-btn-${id}`);
+            if (content.style.display === 'none' || !content.style.display) {
+                content.style.display = 'block';
+                btn.innerText = 'Hide Text';
+            } else {
+                content.style.display = 'none';
+                btn.innerText = 'View Text';
+            }
+        }
+
+        function expandAll() {
+            document.querySelectorAll('.transcript-content').forEach(el => el.style.display = 'block');
+            document.querySelectorAll('.toggle-btn').forEach(btn => btn.innerText = 'Hide Text');
+        }
+
+        function collapseAll() {
+            document.querySelectorAll('.transcript-content').forEach(el => el.style.display = 'none');
+            document.querySelectorAll('.toggle-btn').forEach(btn => btn.innerText = 'View Text');
+        }
+
         async function saveCorrection() {
             if (!currentRecordId) return;
             
@@ -221,6 +305,8 @@
                     const badgeHtml = `<span class="status-badge ${statusClass}">${statusText}</span>`;
                     
                     let contentHtml = '';
+                    let actionHtml = '';
+                    
                     if (record.status === 'completed') {
                         const original = record.original_text || "(Empty Transcription)";
                         const correctedHtml = record.corrected_text ? 
@@ -228,15 +314,30 @@
                             `<div style="color: #999; font-style: italic;">No corrections yet</div>`;
                         
                         contentHtml = `
-                            <div class="text-original">Original: ${original}</div>
-                            ${correctedHtml}
+                            <div id="content-${record.id}" class="transcript-content">
+                                <div class="text-original">Original: ${original}</div>
+                                ${correctedHtml}
+                            </div>
+                        `;
+                        actionHtml = `
+                            <button id="toggle-btn-${record.id}" onclick="toggleTranscript(${record.id})" class="btn-toggle toggle-btn">View Text</button>
+                            <button onclick="editTranscription(${record.id})" class="btn-edit">Edit</button>
                         `;
                     } else {
-                        contentHtml = `<div style="color: #666; font-style: italic;">Audio is currently being transcribed in the background...</div>`;
+                        contentHtml = `
+                            <div id="content-${record.id}" class="transcript-content" style="display: block;">
+                                <div style="color: #666; font-style: italic;">Audio is currently being transcribed in the background...</div>
+                            </div>
+                        `;
                     }
+                    
+                    actionHtml += `<button onclick="deleteTranscription(${record.id})" class="btn-delete">Delete</button>`;
 
                     div.innerHTML = `
                         <h3>File: ${record.filename} ${badgeHtml}</h3>
+                        <div style="margin-top: 10px;">
+                            ${actionHtml}
+                        </div>
                         ${contentHtml}
                     `;
                     list.appendChild(div);
