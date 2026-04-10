@@ -28,7 +28,7 @@ dependencies = [
 ]
 
 [project.scripts]
-transcribe = "app.cli:main"
+transcribe = "app.cli:cli"
 
 [project.urls]
 Homepage = "https://github.com/kjaymiller/conduit-transcripts"

@@ -2,6 +2,7 @@ import os
 import json
 import asyncio
 import click
+import httpx
 from pathlib import Path
 from sqlmodel import Session
 import valkey
@@ -13,19 +14,28 @@ from rich.progress import (
     BarColumn,
     TaskProgressColumn,
 )
+from rich.console import Console
+from rich.table import Table
 from app.transcriber import background_transcribe_task
 
 VALKEY_URL = os.environ.get("VALKEY_URL", "redis://localhost:6379/0")
+APP_PORT = os.environ.get("APP_PORT", "8000")
 vk = valkey.from_url(VALKEY_URL, decode_responses=True)
+console = Console()
 
 
-@click.command(
+@click.group(help="Transcription Improvement Tool CLI")
+def cli():
+    pass
+
+
+@cli.command(
     help="Transcribe individual audio file(s) using the Transcription Improvement Tool."
 )
 @click.argument(
     "files", nargs=-1, type=click.Path(exists=True, dir_okay=False, path_type=Path)
 )
-def main(files):
+def transcribe(files):
     from app.database import create_db_and_tables
 
     create_db_and_tables()
@@ -113,14 +123,53 @@ def main(files):
                 )
                 click.echo("========================================")
                 click.secho(f"Saved to database with Record ID: {record.id}", dim=True)
-                app_port = os.environ.get("APP_PORT", "8000")
                 click.secho(
-                    f"You can view and correct this in the Web UI at http://localhost:{app_port}\n",
+                    f"You can view and correct this in the Web UI at http://localhost:{APP_PORT}\n",
                     dim=True,
                 )
             else:
                 click.secho(f"\n❌ Failed to transcribe '{file_path.name}'.", fg="red")
 
 
+@cli.command(name="active", help="List all active, in-progress transcriptions")
+def list_active():
+    """Fetch active transcriptions from the Valkey API endpoint."""
+    url = f"http://localhost:{APP_PORT}/api/transcriptions/active"
+
+    try:
+        response = httpx.get(url, timeout=10)
+        if response.status_code == 200:
+            active_jobs = response.json()
+
+            if not active_jobs:
+                console.print(
+                    "[yellow]No active transcriptions currently processing.[/yellow]"
+                )
+                return
+
+            table = Table(
+                title="Active Transcriptions",
+                show_header=True,
+                header_style="bold magenta",
+            )
+            table.add_column("Record ID", style="cyan", width=12)
+            table.add_column("Text Sample", style="green")
+
+            for job in active_jobs:
+                table.add_row(
+                    str(job.get("id")), job.get("sample", "(Initializing...)").strip()
+                )
+
+            console.print(table)
+        else:
+            console.print(
+                f"[red]Error fetching active transcriptions: HTTP {response.status_code}[/red]"
+            )
+    except httpx.ConnectError:
+        console.print(
+            f"[red]Error: Could not connect to Web API at {url}. Is the docker app container running?[/red]"
+        )
+
+
 if __name__ == "__main__":
-    main()
+    cli()
