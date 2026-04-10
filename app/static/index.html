@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Transcription Improvement Tool</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; max-width: 800px; margin: 0 auto; padding: 20px; background-color: #f5f5f5; }
+        .card { background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); margin-bottom: 20px; }
+        textarea { width: 100%; height: 150px; margin-top: 10px; padding: 10px; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box; }
+        button { background: #0066cc; color: white; border: none; padding: 10px 15px; border-radius: 4px; cursor: pointer; font-size: 14px; }
+        button:hover { background: #0052a3; }
+        button:disabled { background: #ccc; cursor: not-allowed; }
+        .loader { display: none; margin-top: 10px; color: #666; font-style: italic; }
+        h1, h2, h3 { color: #333; }
+        .history-item { border-bottom: 1px solid #eee; padding-bottom: 15px; margin-bottom: 15px; }
+        .history-item:last-child { border-bottom: none; }
+        .text-original { color: #555; background: #fff0f0; padding: 5px; border-radius: 3px; }
+        .text-corrected { color: #333; background: #f0fff0; padding: 5px; border-radius: 3px; font-weight: bold; }
+    </style>
+</head>
+<body>
+
+    <h1>Transcription Improvement Tool</h1>
+    <p>Upload an audio file to transcribe it. The server uses your past corrections to improve future transcriptions via dynamic prompting.</p>
+
+    <div class="card">
+        <h2>Upload Audio</h2>
+        <input type="file" id="audioFile" accept="audio/*">
+        <br><br>
+        <button id="uploadBtn" onclick="uploadAudio()">Transcribe File</button>
+        <div id="loader" class="loader">Uploading and transcribing... This may take a moment.</div>
+    </div>
+
+    <div id="editorCard" class="card" style="display: none;">
+        <h2>Review and Correct</h2>
+        <p><strong>Original Transcription:</strong></p>
+        <div id="originalText" style="padding: 10px; background: #f9f9f9; border-left: 4px solid #0066cc; margin-bottom: 15px;"></div>
+        
+        <p><strong>Correction:</strong></p>
+        <textarea id="correctedText" placeholder="Edit the text to correct any mistakes..."></textarea>
+        <br>
+        <button onclick="saveCorrection()">Save Correction</button>
+        <span id="saveStatus" style="margin-left: 10px; color: green; display: none;">Saved!</span>
+    </div>
+
+    <div class="card">
+        <h2>Past Transcriptions</h2>
+        <button onclick="loadHistory()" style="margin-bottom: 15px;">Refresh History</button>
+        <div id="historyList"></div>
+    </div>
+
+    <script>
+        let currentRecordId = null;
+
+        async function uploadAudio() {
+            const fileInput = document.getElementById('audioFile');
+            const file = fileInput.files[0];
+            if (!file) return alert('Please select a file first.');
+
+            const btn = document.getElementById('uploadBtn');
+            const loader = document.getElementById('loader');
+            const editorCard = document.getElementById('editorCard');
+
+            btn.disabled = true;
+            loader.style.display = 'block';
+            editorCard.style.display = 'none';
+
+            const formData = new FormData();
+            formData.append('file', file);
+
+            try {
+                const response = await fetch('/api/transcribe', {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                if (!response.ok) throw new Error(await response.text());
+                
+                const data = await response.json();
+                currentRecordId = data.id;
+                
+                document.getElementById('originalText').innerText = data.original_text;
+                document.getElementById('correctedText').value = data.original_text;
+                
+                editorCard.style.display = 'block';
+                loadHistory(); // Refresh history list
+            } catch (error) {
+                alert('Error transcribing audio: ' + error.message);
+            } finally {
+                btn.disabled = false;
+                loader.style.display = 'none';
+            }
+        }
+
+        async function saveCorrection() {
+            if (!currentRecordId) return;
+            
+            const correctedText = document.getElementById('correctedText').value;
+            
+            try {
+                const response = await fetch(`/api/transcriptions/${currentRecordId}`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ corrected_text: correctedText })
+                });
+
+                if (!response.ok) throw new Error('Failed to save');
+                
+                const status = document.getElementById('saveStatus');
+                status.style.display = 'inline';
+                setTimeout(() => status.style.display = 'none', 3000);
+                
+                loadHistory();
+            } catch (error) {
+                alert('Error saving correction: ' + error.message);
+            }
+        }
+
+        async function loadHistory() {
+            try {
+                const response = await fetch('/api/transcriptions');
+                const data = await response.json();
+                
+                const list = document.getElementById('historyList');
+                list.innerHTML = '';
+                
+                data.forEach(record => {
+                    const div = document.createElement('div');
+                    div.className = 'history-item';
+                    
+                    const correctedHtml = record.corrected_text ? 
+                        `<div class="text-corrected">Corrected: ${record.corrected_text}</div>` : 
+                        `<div style="color: #999; font-style: italic;">No corrections yet</div>`;
+
+                    div.innerHTML = `
+                        <h3>File: ${record.filename}</h3>
+                        <div class="text-original">Original: ${record.original_text}</div>
+                        ${correctedHtml}
+                    `;
+                    list.appendChild(div);
+                });
+            } catch (error) {
+                console.error('Error loading history:', error);
+            }
+        }
+
+        // Load history on page load
+        loadHistory();
+    </script>
+</body>
+</html>
