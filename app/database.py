@@ -4,6 +4,17 @@ from sqlmodel import Field, SQLModel, create_engine, Session, Relationship
 import os
 
 
+class Diff(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    correction_id: Optional[int] = Field(default=None, foreign_key="correction.id")
+    original_phrase: str
+    corrected_phrase: str
+    context: Optional[str] = None
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+    correction: Optional["Correction"] = Relationship(back_populates="diffs")
+
+
 class Correction(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     transcription_id: Optional[int] = Field(
@@ -16,17 +27,7 @@ class Correction(SQLModel, table=True):
     transcription: Optional["Transcription"] = Relationship(
         back_populates="corrections"
     )
-
-
-class Diff(SQLModel, table=True):
-    id: Optional[int] = Field(default=None, primary_key=True)
-    transcription_id: Optional[int] = Field(
-        default=None, foreign_key="transcription.id"
-    )
-    diff_data: str
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-
-    transcription: Optional["Transcription"] = Relationship(back_populates="diffs")
+    diffs: List[Diff] = Relationship(back_populates="correction")
 
 
 class Transcription(SQLModel, table=True):
@@ -36,7 +37,6 @@ class Transcription(SQLModel, table=True):
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
     corrections: List[Correction] = Relationship(back_populates="transcription")
-    diffs: List[Diff] = Relationship(back_populates="transcription")
 
 
 # Connect to the local Postgres database running via Docker

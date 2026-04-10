@@ -4,7 +4,7 @@ import httpx
 import asyncio
 from pathlib import Path
 from sqlmodel import Session, select
-from app.database import get_session, TranscriptionRecord, engine
+from app.database import get_session, Transcription, Correction, Diff, engine
 
 # URL of the WhisperLiveKit server we set up
 WLK_URL = os.environ.get("WLK_URL", "http://localhost:9090/v1/audio/transcriptions")
@@ -12,27 +12,23 @@ WLK_URL = os.environ.get("WLK_URL", "http://localhost:9090/v1/audio/transcriptio
 
 def build_prompt_from_corrections(session: Session) -> str:
     """
-    Fetch recent corrections and build a prompt string to help Whisper.
+    Fetch recent diffs and build a prompt string to help Whisper.
     Format: "Glossary/Corrections: [wrong] -> [right], ..."
     """
-    records = session.exec(
-        select(TranscriptionRecord)
-        .where(TranscriptionRecord.corrected_text != None)
-        .order_by(TranscriptionRecord.updated_at.desc())
-        .limit(20)
-    ).all()
+    # Fetch recent diffs
+    diffs = session.exec(select(Diff).order_by(Diff.created_at.desc()).limit(20)).all()
 
-    corrections = []
-    for r in records:
-        if r.original_text.strip() != r.corrected_text.strip():
-            corrections.append(r.corrected_text.strip())
+    correction_texts = []
+    for d in diffs:
+        if d.original_phrase and d.corrected_phrase:
+            correction_texts.append(f"{d.original_phrase} -> {d.corrected_phrase}")
 
-    if not corrections:
+    if not correction_texts:
         return ""
 
     return (
         "Make sure to use correct terminology based on previous corrections: "
-        + " ".join(corrections)
+        + ", ".join(correction_texts)
     )
 
 
@@ -62,7 +58,7 @@ async def async_transcribe_file(file_path: Path):
 
                     # Save to DB
                     with Session(engine) as session:
-                        record = TranscriptionRecord(
+                        record = Transcription(
                             filename=file_path.name, original_text=original_text
                         )
                         session.add(record)
