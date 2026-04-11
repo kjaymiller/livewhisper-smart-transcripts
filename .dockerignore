@@ -57,3 +57,5 @@ MANIFEST
 transcripts/
 infra/
 tests/
+.venv/
+uv.lock

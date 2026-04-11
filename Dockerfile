@@ -25,6 +25,7 @@ RUN uv lock && uv sync
 
 # Set environment variables
 ENV PYTHONUNBUFFERED=1
+ENV PATH="/app/.venv/bin:$PATH"
 
 # Expose port
 EXPOSE 8000
