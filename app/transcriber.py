@@ -219,7 +219,7 @@ async def background_transcribe_task(
             audio_path=str(file_path),
             url=url,
             chunk_duration=0.5,
-            speed=20.0,  # Pace at 20x real-time so we don't overflow the ASGI websocket receive queue
+            speed=5.0,  # Pace at 5x real-time so we never overflow the Uvicorn TCP buffer
             timeout=14400.0,  # Massive 4 hour timeout limit just in case
             on_response=on_response_callback,
         )
