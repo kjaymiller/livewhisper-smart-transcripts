@@ -111,18 +111,21 @@ def transcribe(files):
 
             asyncio.run(run_task())
 
-            # Check result
-            session.refresh(record)
-            if record.status == "completed":
+            # Fetch fresh record directly from DB to avoid session expiration
+            fresh_record = session.get(Transcription, record.id)
+
+            if fresh_record and fresh_record.status == "completed":
                 click.secho("\n✅ Transcription Complete:", fg="green", bold=True)
                 click.echo("========================================")
                 click.echo(
-                    record.original_text.strip()[:500] + "..."
-                    if len(record.original_text) > 500
-                    else record.original_text.strip()
+                    fresh_record.original_text.strip()[:500] + "..."
+                    if len(fresh_record.original_text) > 500
+                    else fresh_record.original_text.strip()
                 )
                 click.echo("========================================")
-                click.secho(f"Saved to database with Record ID: {record.id}", dim=True)
+                click.secho(
+                    f"Saved to database with Record ID: {fresh_record.id}", dim=True
+                )
                 click.secho(
                     f"You can view and correct this in the Web UI at http://localhost:{APP_PORT}\n",
                     dim=True,
