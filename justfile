@@ -48,6 +48,18 @@ transcribe +FILES:
 help-transcribe:
     uv run transcribe --help
 
+# List all active, in-progress transcriptions
+active:
+    uv run app/cli.py active
+
+# Clear all stuck or orphaned in-progress transcriptions from the database and Valkey
+clear-active:
+    @echo "Clearing stuck transcription keys from Valkey..."
+    docker exec conduit-valkey valkey-cli keys "transcription_progress:*" | xargs -I {} docker exec conduit-valkey valkey-cli del "{}" || true
+    @echo "Deleting orphaned processing records from PostgreSQL..."
+    docker exec conduit-postgres psql -U postgres -d transcripts -c "DELETE FROM transcription WHERE status = 'processing';"
+    @echo "Done."
+
 # ==========================================
 # UV / Dependency Management
 # ==========================================
