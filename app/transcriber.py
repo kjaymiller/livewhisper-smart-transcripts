@@ -82,7 +82,9 @@ async def robust_transcribe_audio(
     chunk_bytes = int(chunk_duration * SAMPLE_RATE * BYTES_PER_SAMPLE)
 
     # Connect to WebSocket WITH KEEPALIVES DISABLED so long MLX inferences don't timeout
-    async with websockets.connect(url, ping_interval=None, ping_timeout=None) as ws:
+    async with websockets.connect(
+        url, ping_interval=None, ping_timeout=None, close_timeout=None
+    ) as ws:
         config_raw = await ws.recv()
         config_msg = json.loads(config_raw)
         is_pcm = config_msg.get("useAudioWorklet", False)
