@@ -21,10 +21,13 @@ VALKEY_URL = os.environ.get("VALKEY_URL", "redis://localhost:6379/0")
 HF_KEY = os.environ.get("HUGGINGFACE_API_KEY")
 
 if not HF_KEY:
-    logger.warning("HUGGINGFACE_API_KEY not found in environment. Pyannote diarization might fail.")
+    logger.warning(
+        "HUGGINGFACE_API_KEY not found in environment. Pyannote diarization might fail."
+    )
 
 # Setup Valkey client
 vk = valkey.from_url(VALKEY_URL, decode_responses=True)
+
 
 def build_prompt_from_corrections(session: Session) -> str:
     diffs = session.exec(select(Diff).order_by(Diff.created_at.desc()).limit(20)).all()
@@ -39,6 +42,7 @@ def build_prompt_from_corrections(session: Session) -> str:
         "Make sure to use correct terminology based on previous corrections: "
         + ", ".join(correction_texts)
     )
+
 
 def align_words_with_diarization(whisper_result: dict, diarization) -> str:
     """
@@ -58,7 +62,7 @@ def align_words_with_diarization(whisper_result: dict, diarization) -> str:
             current_words = []
 
     segments = whisper_result.get("segments", [])
-    
+
     for segment in segments:
         words = segment.get("words", [])
         if not words:
@@ -69,37 +73,38 @@ def align_words_with_diarization(whisper_result: dict, diarization) -> str:
                 if turn.start <= word_midpoint <= turn.end:
                     detected_speaker = speaker
                     break
-                    
+
             if detected_speaker != current_speaker:
                 flush_block()
                 current_speaker = detected_speaker
-                
+
             current_words.append(segment.get("text", " "))
             continue
-            
+
         for word in words:
             word_start = word["start"]
             word_end = word["end"]
             word_text = word["word"]
-            
+
             word_midpoint = (word_start + word_end) / 2
-            
+
             # Find speaker for this word
             detected_speaker = "UNKNOWN"
             for turn, _, speaker in diarization.itertracks(yield_label=True):
                 if turn.start <= word_midpoint <= turn.end:
                     detected_speaker = speaker
                     break
-                    
+
             if detected_speaker != current_speaker:
                 flush_block()
                 current_speaker = detected_speaker
-                
+
             current_words.append(word_text)
-            
+
     flush_block()
-    
+
     return "\n\n".join(text_blocks)
+
 
 async def background_transcribe_task(
     record_id: int, file_path: Path, delete_file_after: bool = False
@@ -121,24 +126,19 @@ async def background_transcribe_task(
             json.dumps({"stage": "Diarizing audio (PyAnnote)...", "text": ""}),
         )
         logger.info(f"Starting diarization for {file_path}")
-        
+
         # Load pipeline synchronously in an executor if needed, but it's okay here for a background worker.
         pipeline = await asyncio.to_thread(
-            Pipeline.from_pretrained,
-            "pyannote/speaker-diarization-3.1",
-            use_auth_token=HF_KEY
+            Pipeline.from_pretrained, "pyannote/speaker-diarization-3.1", token=HF_KEY
         )
-        
+
         if torch.backends.mps.is_available():
             pipeline.to(torch.device("mps"))
         elif torch.cuda.is_available():
             pipeline.to(torch.device("cuda"))
 
         diarization = await asyncio.to_thread(
-            pipeline,
-            str(file_path),
-            min_speakers=1,
-            max_speakers=4
+            pipeline, str(file_path), min_speakers=1, max_speakers=4
         )
 
         # 2. Transcription
@@ -148,18 +148,13 @@ async def background_transcribe_task(
             json.dumps({"stage": "Transcribing audio (MLX Whisper)...", "text": ""}),
         )
         logger.info(f"Starting transcription for {file_path}")
-        
-        whisper_kwargs = {
-            "word_timestamps": True,
-            "verbose": False
-        }
+
+        whisper_kwargs = {"word_timestamps": True, "verbose": False}
         if prompt_text:
             whisper_kwargs["initial_prompt"] = prompt_text
 
         whisper_result = await asyncio.to_thread(
-            mlx_whisper.transcribe,
-            str(file_path),
-            **whisper_kwargs
+            mlx_whisper.transcribe, str(file_path), **whisper_kwargs
         )
 
         # 3. Alignment
@@ -171,9 +166,7 @@ async def background_transcribe_task(
         logger.info(f"Starting alignment for {file_path}")
 
         final_text = await asyncio.to_thread(
-            align_words_with_diarization,
-            whisper_result,
-            diarization
+            align_words_with_diarization, whisper_result, diarization
         )
 
         vk.setex(
