@@ -129,7 +129,9 @@ async def background_transcribe_task(
 
         # Load pipeline synchronously in an executor if needed, but it's okay here for a background worker.
         pipeline = await asyncio.to_thread(
-            Pipeline.from_pretrained, "pyannote/speaker-diarization-3.1", token=HF_KEY
+            Pipeline.from_pretrained,
+            "pyannote/speaker-diarization-community-1",
+            token=HF_KEY,
         )
 
         if torch.backends.mps.is_available():
