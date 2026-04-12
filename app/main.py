@@ -95,8 +95,7 @@ def get_transcription_status(record_id: int, session: Session = Depends(get_sess
             progress_data = vk.get(f"transcription_progress:{record_id}")
             if progress_data:
                 progress = json.loads(progress_data)
-                result["current_chunk"] = progress.get("current", 0)
-                result["total_chunks"] = progress.get("total", 0)
+                result["stage"] = progress.get("stage", "Processing...")
                 result["partial_text"] = progress.get("text", "")
         except Exception as e:
             pass

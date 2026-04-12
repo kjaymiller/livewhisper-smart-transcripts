@@ -84,6 +84,7 @@ def transcribe(files):
                             )
                             if progress_data:
                                 p_dict = json.loads(progress_data)
+                                stage = p_dict.get("stage", "Processing...")
                                 text = p_dict.get("text", "")
 
                                 # Show a live sample of the transcription
@@ -96,11 +97,13 @@ def transcribe(files):
                                         else clean_text
                                     )
 
+                                description = f"[ID: {record.id}] {stage}"
+                                if preview:
+                                    description += f" | ...{preview}"
+
                                 progress.update(
                                     progress_task_id,
-                                    description=f"[ID: {record.id}] Transcribing: ...{preview}"
-                                    if preview
-                                    else f"[ID: {record.id}] Transcribing...",
+                                    description=description,
                                 )
                         except Exception:
                             pass  # Safely ignore JSON or connection errors during polling
