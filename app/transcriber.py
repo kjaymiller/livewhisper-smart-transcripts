@@ -132,50 +132,77 @@ async def background_transcribe_task(
         )
         logger.info(f"Starting diarization for {file_path}")
 
-        # Load pipeline synchronously in an executor if needed, but it's okay here for a background worker.
-        pipeline = await asyncio.to_thread(
-            Pipeline.from_pretrained,
-            "pyannote/speaker-diarization-community-1",
-            token=HF_KEY,
-        )
+        # Try to load existing diarization cache to save time
+        cache_file = Path(f".episode_cache/{file_path.name}_diarization.pt")
 
-        if torch.backends.mps.is_available():
-            pipeline.to(torch.device("mps"))
-        elif torch.cuda.is_available():
-            pipeline.to(torch.device("cuda"))
+        diarization = None
+        if cache_file.exists():
+            try:
+                import pickle
 
-        def diarization_hook(
-            step_name, step_artefact, file=None, completed=None, total=None
-        ):
-            # We don't want to spam valkey if completed/total isn't present
-            if completed is not None and total is not None:
-                # Update progress based on the step being run
-                percentage = int((completed / total) * 100)
-                vk.setex(
-                    f"transcription_progress:{record_id}",
-                    86400,
-                    json.dumps(
-                        {
-                            "stage": f"Diarizing ({step_name}: {percentage}%)...",
-                            "text": "",
-                        }
-                    ),
-                )
-            else:
-                # Just indicate the new stage has started
-                vk.setex(
-                    f"transcription_progress:{record_id}",
-                    86400,
-                    json.dumps({"stage": f"Diarizing ({step_name})...", "text": ""}),
-                )
+                with open(cache_file, "rb") as f:
+                    diarization = pickle.load(f)
+                logger.info(f"Loaded cached diarization from {cache_file}")
+            except Exception as e:
+                logger.warning(f"Failed to load cached diarization: {e}")
 
-        diarization = await asyncio.to_thread(
-            pipeline,
-            str(file_path),
-            min_speakers=1,
-            max_speakers=4,
-            hook=diarization_hook,
-        )
+        if diarization is None:
+            # Load pipeline synchronously in an executor if needed, but it's okay here for a background worker.
+            pipeline = await asyncio.to_thread(
+                Pipeline.from_pretrained,
+                "pyannote/speaker-diarization-community-1",
+                token=HF_KEY,
+            )
+
+            if torch.backends.mps.is_available():
+                pipeline.to(torch.device("mps"))
+            elif torch.cuda.is_available():
+                pipeline.to(torch.device("cuda"))
+
+            def diarization_hook(
+                step_name, step_artefact, file=None, completed=None, total=None
+            ):
+                # We don't want to spam valkey if completed/total isn't present
+                if completed is not None and total is not None:
+                    # Update progress based on the step being run
+                    percentage = int((completed / total) * 100)
+                    vk.setex(
+                        f"transcription_progress:{record_id}",
+                        86400,
+                        json.dumps(
+                            {
+                                "stage": f"Diarizing ({step_name}: {percentage}%)...",
+                                "text": "",
+                            }
+                        ),
+                    )
+                else:
+                    # Just indicate the new stage has started
+                    vk.setex(
+                        f"transcription_progress:{record_id}",
+                        86400,
+                        json.dumps(
+                            {"stage": f"Diarizing ({step_name})...", "text": ""}
+                        ),
+                    )
+
+            diarization = await asyncio.to_thread(
+                pipeline,
+                str(file_path),
+                min_speakers=1,
+                max_speakers=4,
+                hook=diarization_hook,
+            )
+
+            # Cache the diarization output for next time to prevent re-running
+            try:
+                cache_file.parent.mkdir(parents=True, exist_ok=True)
+                import pickle
+
+                with open(cache_file, "wb") as f:
+                    pickle.dump(diarization, f)
+            except Exception as e:
+                logger.warning(f"Failed to cache diarization: {e}")
 
         # 2. Transcription
         vk.setex(
