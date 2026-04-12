@@ -69,7 +69,10 @@ def align_words_with_diarization(whisper_result: dict, diarization) -> str:
             # Fallback if words are missing (shouldn't happen with word_timestamps=True)
             word_midpoint = (segment["start"] + segment["end"]) / 2
             detected_speaker = "UNKNOWN"
-            for turn, _, speaker in diarization.itertracks(yield_label=True):
+
+            # DiarizeOutput in newer pyannote returns a dataclass
+            annotation = getattr(diarization, "speaker_diarization", diarization)
+            for turn, _, speaker in annotation.itertracks(yield_label=True):
                 if turn.start <= word_midpoint <= turn.end:
                     detected_speaker = speaker
                     break
@@ -90,7 +93,9 @@ def align_words_with_diarization(whisper_result: dict, diarization) -> str:
 
             # Find speaker for this word
             detected_speaker = "UNKNOWN"
-            for turn, _, speaker in diarization.itertracks(yield_label=True):
+
+            annotation = getattr(diarization, "speaker_diarization", diarization)
+            for turn, _, speaker in annotation.itertracks(yield_label=True):
                 if turn.start <= word_midpoint <= turn.end:
                     detected_speaker = speaker
                     break
