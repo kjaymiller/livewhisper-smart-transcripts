@@ -139,8 +139,37 @@ async def background_transcribe_task(
         elif torch.cuda.is_available():
             pipeline.to(torch.device("cuda"))
 
+        def diarization_hook(
+            step_name, step_artefact, file=None, completed=None, total=None
+        ):
+            # We don't want to spam valkey if completed/total isn't present
+            if completed is not None and total is not None:
+                # Update progress based on the step being run
+                percentage = int((completed / total) * 100)
+                vk.setex(
+                    f"transcription_progress:{record_id}",
+                    86400,
+                    json.dumps(
+                        {
+                            "stage": f"Diarizing ({step_name}: {percentage}%)...",
+                            "text": "",
+                        }
+                    ),
+                )
+            else:
+                # Just indicate the new stage has started
+                vk.setex(
+                    f"transcription_progress:{record_id}",
+                    86400,
+                    json.dumps({"stage": f"Diarizing ({step_name})...", "text": ""}),
+                )
+
         diarization = await asyncio.to_thread(
-            pipeline, str(file_path), min_speakers=1, max_speakers=4
+            pipeline,
+            str(file_path),
+            min_speakers=1,
+            max_speakers=4,
+            hook=diarization_hook,
         )
 
         # 2. Transcription
