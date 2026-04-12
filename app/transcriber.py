@@ -3,154 +3,83 @@ import json
 import asyncio
 import logging
 import subprocess
-from dataclasses import dataclass, field
+import tempfile
+import traceback
 from pathlib import Path
 from typing import List, Optional
 from sqlmodel import Session, select
 import valkey
-import websockets
+import httpx
 
 from app.database import engine, Transcription, Diff
 
 logger = logging.getLogger(__name__)
 
 VALKEY_URL = os.environ.get("VALKEY_URL", "redis://localhost:6379/0")
-WLK_WS_URL = os.environ.get("WLK_WS_URL", "ws://localhost:9090/asr")
+WLK_URL = os.environ.get("WLK_URL", "http://localhost:9090/v1/audio/transcriptions")
 
 # Setup Valkey client
 vk = valkey.from_url(VALKEY_URL, decode_responses=True)
 
-# ------------------------------------------------------------------------
-# Standalone Transcription Client (Adapted from whisperlivekit)
-# We embed this here so we have full control over the websocket connection
-# keepalive intervals (ping_interval=None) to prevent timeouts on long files.
-# ------------------------------------------------------------------------
 
-SAMPLE_RATE = 16000
-BYTES_PER_SAMPLE = 2  # s16le
-
-
-@dataclass
-class TranscriptionResult:
-    responses: List[dict] = field(default_factory=list)
-    audio_duration: float = 0.0
-
-    @property
-    def lines(self) -> List[dict]:
-        for resp in reversed(self.responses):
-            if resp.get("lines"):
-                return resp["lines"]
-        return []
-
-
-def load_audio_pcm(audio_path: str, sample_rate: int = SAMPLE_RATE) -> bytes:
-    cmd = [
-        "ffmpeg",
-        "-i",
-        str(audio_path),
-        "-f",
-        "s16le",
-        "-acodec",
-        "pcm_s16le",
-        "-ar",
-        str(sample_rate),
-        "-ac",
-        "1",
-        "-loglevel",
-        "error",
-        "pipe:1",
-    ]
-    proc = subprocess.run(cmd, capture_output=True)
-    if proc.returncode != 0:
-        raise RuntimeError(f"ffmpeg conversion failed: {proc.stderr.decode().strip()}")
-    if not proc.stdout:
-        raise RuntimeError(f"ffmpeg produced no output for {audio_path}")
-    return proc.stdout
+def get_audio_duration(file_path: Path) -> float:
+    try:
+        result = subprocess.run(
+            [
+                "ffprobe",
+                "-v",
+                "error",
+                "-show_entries",
+                "format=duration",
+                "-of",
+                "default=noprint_wrappers=1:nokey=1",
+                str(file_path),
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            check=True,
+        )
+        return float(result.stdout.strip())
+    except Exception:
+        return 0.0
 
 
-async def robust_transcribe_audio(
-    audio_path: str,
-    url: str,
-    chunk_duration: float = 0.5,
-    speed: float = 0,
-    timeout: float = 3600.0,
-    on_response: Optional[callable] = None,
-) -> TranscriptionResult:
-    result = TranscriptionResult()
-    pcm_data = load_audio_pcm(audio_path)
-    result.audio_duration = len(pcm_data) / (SAMPLE_RATE * BYTES_PER_SAMPLE)
-    chunk_bytes = int(chunk_duration * SAMPLE_RATE * BYTES_PER_SAMPLE)
+def split_audio(file_path: Path, chunk_duration: int = 600) -> list[Path]:
+    """Splits an audio file into chunks of `chunk_duration` seconds."""
+    duration = get_audio_duration(file_path)
+    if duration <= chunk_duration:
+        return [file_path]
 
-    # Connect to WebSocket WITH KEEPALIVES DISABLED so long MLX inferences don't timeout
-    async with websockets.connect(
-        url, ping_interval=None, ping_timeout=None, close_timeout=None, max_size=None
-    ) as ws:
-        config_raw = await ws.recv()
-        config_msg = json.loads(config_raw)
-        is_pcm = config_msg.get("useAudioWorklet", False)
+    chunks = []
+    temp_dir = Path(tempfile.mkdtemp(prefix="wlk_chunks_"))
 
-        done_event = asyncio.Event()
+    ext = file_path.suffix
+    output_pattern = str(temp_dir / f"chunk_%03d{ext}")
 
-        async def send_audio():
-            if is_pcm:
-                offset = 0
-                while offset < len(pcm_data):
-                    end = min(offset + chunk_bytes, len(pcm_data))
-                    await ws.send(pcm_data[offset:end])
-                    offset = end
-                    if speed > 0:
-                        await asyncio.sleep(chunk_duration / speed)
-            else:
-                file_bytes = Path(audio_path).read_bytes()
-                raw_chunk_size = 32000
-                offset = 0
-                while offset < len(file_bytes):
-                    end = min(offset + raw_chunk_size, len(file_bytes))
-                    await ws.send(file_bytes[offset:end])
-                    offset = end
-                    if speed > 0:
-                        await asyncio.sleep(0.5 / speed)
-
-            await ws.send(b"")  # EOF
-
-        async def receive_results():
-            try:
-                async for raw_msg in ws:
-                    data = json.loads(raw_msg)
-                    if data.get("type") == "ready_to_stop":
-                        done_event.set()
-                        return
-
-                    result.responses.append(data)
-                    if on_response:
-                        on_response(data)
-            except Exception as e:
-                logger.debug(f"Receiver ended: {e}")
-            done_event.set()
-
-        send_task = asyncio.create_task(send_audio())
-        recv_task = asyncio.create_task(receive_results())
-
-        total_timeout = (result.audio_duration / speed if speed > 0 else 1.0) + timeout
-
-        try:
-            await asyncio.wait_for(
-                asyncio.gather(send_task, recv_task), timeout=total_timeout
-            )
-        except asyncio.TimeoutError:
-            send_task.cancel()
-            recv_task.cancel()
-            try:
-                await asyncio.gather(send_task, recv_task, return_exceptions=True)
-            except:
-                pass
-
-    return result
-
-
-# ------------------------------------------------------------------------
-# End of standalone client
-# ------------------------------------------------------------------------
+    try:
+        subprocess.run(
+            [
+                "ffmpeg",
+                "-i",
+                str(file_path),
+                "-f",
+                "segment",
+                "-segment_time",
+                str(chunk_duration),
+                "-c",
+                "copy",
+                output_pattern,
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            check=True,
+        )
+        chunks = sorted(list(temp_dir.glob(f"chunk_*{ext}")))
+        return chunks
+    except Exception as e:
+        logger.error(f"Error splitting audio: {e}")
+        return [file_path]
 
 
 def build_prompt_from_corrections(session: Session) -> str:
@@ -168,75 +97,92 @@ def build_prompt_from_corrections(session: Session) -> str:
     )
 
 
+async def async_transcribe_chunk(
+    client: httpx.AsyncClient, chunk_path: Path, prompt_text: str
+) -> str:
+    """Sends a single chunk to the WhisperLiveKit API."""
+    try:
+        with open(chunk_path, "rb") as f:
+            data = {"model": "base", "response_format": "verbose_json"}
+            if prompt_text:
+                data["prompt"] = prompt_text
+
+            # Set a massive timeout (1 hour per chunk) so the HTTP request never drops out
+            response = await client.post(
+                WLK_URL,
+                files={"file": (chunk_path.name, f, "audio/wav")},
+                data=data,
+                timeout=3600.0,
+            )
+
+            if response.status_code == 200:
+                result = response.json()
+                segments = result.get("segments", [])
+
+                # Format text with speaker labels if available
+                text_parts = []
+                for seg in segments:
+                    text = seg.get("text", "").strip()
+                    speaker = seg.get("speaker")
+
+                    if speaker is not None and speaker != -2:
+                        text_parts.append(f"[Speaker {speaker}]: {text}")
+                    else:
+                        text_parts.append(text)
+
+                if not text_parts and result.get("text"):
+                    return result.get("text", "")
+
+                return "\n\n".join(text_parts)
+            else:
+                logger.error(f"API Error ({response.status_code}): {response.text}")
+                return ""
+    except Exception as e:
+        logger.error(f"Error communicating with API: {e}")
+        return ""
+
+
 async def background_transcribe_task(
     record_id: int, file_path: Path, delete_file_after: bool = False
 ):
-    """Background task to transcribe audio via WebSocket, tracking progress in Valkey."""
     try:
         with Session(engine) as session:
             prompt_text = build_prompt_from_corrections(session)
 
-        # Initialize progress in Valkey (expires in 24 hours just in case)
+        # Chunk audio into 10 minute blocks to safely pass the stateless HTTP inference
+        chunks = split_audio(file_path, chunk_duration=600)
+        total_chunks = len(chunks)
+
         vk.setex(
             f"transcription_progress:{record_id}",
             86400,
-            json.dumps({"current": 0, "total": 1, "text": ""}),
+            json.dumps({"current": 0, "total": total_chunks, "text": ""}),
         )
 
-        def on_response_callback(data):
-            lines = data.get("lines", [])
-            buf = data.get("buffer_transcription", "")
+        full_transcription = []
 
-            text_parts = []
-            for line in lines:
-                text = line.get("text", "").strip()
-                speaker = line.get("speaker")
-                if speaker is not None and speaker != -2:
-                    text_parts.append(f"[Speaker {speaker}]: {text}")
-                else:
-                    text_parts.append(text)
+        async with httpx.AsyncClient() as client:
+            for idx, chunk in enumerate(chunks):
+                text = await async_transcribe_chunk(client, chunk, prompt_text)
+                if text:
+                    full_transcription.append(text)
 
-            if buf:
-                text_parts.append(f"(... {buf})")
+                current_text = "\n\n".join(full_transcription).strip()
 
-            current_text = "\n\n".join(text_parts).strip()
+                vk.setex(
+                    f"transcription_progress:{record_id}",
+                    86400,
+                    json.dumps(
+                        {
+                            "current": idx + 1,
+                            "total": total_chunks,
+                            "text": current_text,
+                        }
+                    ),
+                )
 
-            # Update progress
-            vk.setex(
-                f"transcription_progress:{record_id}",
-                86400,
-                json.dumps({"current": 1, "total": 1, "text": current_text}),
-            )
+        final_text = "\n\n".join(full_transcription).strip()
 
-        # Add prompt language via query parameter to bypass language detection
-        url = WLK_WS_URL
-        if prompt_text:
-            import urllib.parse
-
-            url += "?prompt=" + urllib.parse.quote(prompt_text)
-
-        result = await robust_transcribe_audio(
-            audio_path=str(file_path),
-            url=url,
-            chunk_duration=0.5,
-            speed=5.0,  # Pace at 5x real-time so we never overflow the Uvicorn TCP buffer
-            timeout=14400.0,  # Massive 4 hour timeout limit just in case
-            on_response=on_response_callback,
-        )
-
-        # Build final text with speaker labels
-        final_text_parts = []
-        for line in result.lines:
-            text = line.get("text", "").strip()
-            speaker = line.get("speaker")
-            if speaker is not None and speaker != -2:
-                final_text_parts.append(f"[Speaker {speaker}]: {text}")
-            else:
-                final_text_parts.append(text)
-
-        final_text = "\n\n".join(final_text_parts).strip()
-
-        # Update final text in the Database
         with Session(engine) as session:
             record = session.get(Transcription, record_id)
             if record:
@@ -246,27 +192,45 @@ async def background_transcribe_task(
                     session.add(record)
                     session.commit()
                 else:
-                    # Failed or returned nothing, remove the record
                     session.delete(record)
                     session.commit()
 
     except Exception as e:
-        import traceback
-
-        traceback.print_exc()
-        print(f"Background task error: {e}")
+        logger.error(f"Background task error: {e}")
+        logger.debug(f"Traceback: {traceback.format_exc()}")
         with Session(engine) as session:
             record = session.get(Transcription, record_id)
             if record:
                 session.delete(record)
                 session.commit()
     finally:
-        # Cleanup the originally uploaded file if requested
+        chunks_dir = (
+            file_path.parent
+            if file_path.parent.name.startswith("wlk_chunks_")
+            else None
+        )
+        if (
+            not chunks_dir
+            and hasattr(chunks[0], "parent")
+            and chunks[0].parent.name.startswith("wlk_chunks_")
+        ):
+            chunks_dir = chunks[0].parent
+
+        if chunks_dir and chunks_dir.exists():
+            for f in chunks_dir.glob("*"):
+                try:
+                    f.unlink()
+                except:
+                    pass
+            try:
+                chunks_dir.rmdir()
+            except:
+                pass
+
         if delete_file_after and file_path.exists():
             try:
                 file_path.unlink()
             except:
                 pass
 
-        # Cleanup valkey progress
         vk.delete(f"transcription_progress:{record_id}")
