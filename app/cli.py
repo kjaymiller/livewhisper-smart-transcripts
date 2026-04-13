@@ -115,26 +115,32 @@ def transcribe(files):
             asyncio.run(run_task())
 
             # Fetch fresh record directly from DB to avoid session expiration
-            fresh_record = session.get(Transcription, record.id)
+            # Open a new session so we don't hit cached un-updated states
+            with Session(engine) as check_session:
+                fresh_record = check_session.get(Transcription, record.id)
 
-            if fresh_record and fresh_record.status == "completed":
-                click.secho("\n✅ Transcription Complete:", fg="green", bold=True)
-                click.echo("========================================")
-                click.echo(
-                    fresh_record.original_text.strip()[:500] + "..."
-                    if len(fresh_record.original_text) > 500
-                    else fresh_record.original_text.strip()
-                )
-                click.echo("========================================")
-                click.secho(
-                    f"Saved to database with Record ID: {fresh_record.id}", dim=True
-                )
-                click.secho(
-                    f"You can view and correct this in the Web UI at http://localhost:{APP_PORT}\n",
-                    dim=True,
-                )
-            else:
-                click.secho(f"\n❌ Failed to transcribe '{file_path.name}'.", fg="red")
+                if fresh_record and fresh_record.status == "completed":
+                    click.secho("\n✅ Transcription Complete:", fg="green", bold=True)
+                    click.echo("========================================")
+                    click.echo(
+                        fresh_record.original_text.strip()[:500] + "..."
+                        if len(fresh_record.original_text) > 500
+                        else fresh_record.original_text.strip()
+                    )
+                    click.echo("========================================")
+                    click.secho(
+                        f"Saved to database with Record ID: {fresh_record.id}", dim=True
+                    )
+                    click.secho(
+                        f"You can view and correct this in the Web UI at http://localhost:{APP_PORT}\n",
+                        dim=True,
+                    )
+                else:
+                    db_status = fresh_record.status if fresh_record else "Not Found"
+                    click.secho(
+                        f"\n❌ Failed to transcribe '{file_path.name}' (DB Status: {db_status}).",
+                        fg="red",
+                    )
 
 
 @cli.command(name="active", help="List all active, in-progress transcriptions")
