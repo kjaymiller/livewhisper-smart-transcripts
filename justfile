@@ -66,7 +66,7 @@ clear-active:
 
 # Sync and install dependencies
 sync:
-    uv sync
+    uv sync --extra transcription
 
 # Update lockfile dependencies
 lock:
@@ -75,7 +75,7 @@ lock:
 # Upgrade dependencies and recreate lockfile
 upgrade-deps:
     uv lock --upgrade
-    uv sync
+    uv sync --extra transcription
 
 # ==========================================
 # Code Quality & Cleanup
