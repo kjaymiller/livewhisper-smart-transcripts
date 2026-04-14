@@ -6,9 +6,6 @@ import traceback
 from pathlib import Path
 from sqlmodel import Session, select
 import valkey
-import mlx_whisper
-import torch
-from pyannote.audio import Pipeline
 from dotenv import load_dotenv
 
 from app.database import engine, Transcription, Diff
@@ -95,10 +92,11 @@ def align_words_with_diarization(whisper_result: dict, diarization) -> str:
             detected_speaker = "UNKNOWN"
 
             annotation = getattr(diarization, "speaker_diarization", diarization)
-            for turn, _, speaker in annotation.itertracks(yield_label=True):
-                if turn.start <= word_midpoint <= turn.end:
-                    detected_speaker = speaker
-                    break
+            if hasattr(annotation, "itertracks"):
+                for turn, _, speaker in annotation.itertracks(yield_label=True):
+                    if turn.start <= word_midpoint <= turn.end:
+                        detected_speaker = speaker
+                        break
 
             if detected_speaker != current_speaker:
                 flush_block()
@@ -148,6 +146,9 @@ async def background_transcribe_task(
 
         if diarization is None:
             # Load pipeline synchronously in an executor if needed, but it's okay here for a background worker.
+            import torch
+            from pyannote.audio import Pipeline
+
             pipeline = await asyncio.to_thread(
                 Pipeline.from_pretrained,
                 "pyannote/speaker-diarization-community-1",
@@ -211,6 +212,8 @@ async def background_transcribe_task(
             json.dumps({"stage": "Transcribing audio (MLX Whisper)...", "text": ""}),
         )
         logger.info(f"Starting transcription for {file_path}")
+
+        import mlx_whisper
 
         whisper_kwargs = {"word_timestamps": True, "verbose": False}
         if prompt_text:

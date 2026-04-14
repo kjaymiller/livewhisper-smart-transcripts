@@ -285,18 +285,22 @@ dependencies = [
     { name = "fastapi" },
     { name = "httpx" },
     { name = "jinja2" },
-    { name = "mlx-whisper" },
     { name = "psycopg2-binary" },
-    { name = "pyannote-audio" },
     { name = "python-dotenv" },
     { name = "python-multipart" },
     { name = "rich" },
     { name = "sqlmodel" },
-    { name = "torch" },
-    { name = "torchaudio" },
     { name = "uvicorn" },
     { name = "valkey" },
     { name = "websockets" },
+]
+
+[package.optional-dependencies]
+transcription = [
+    { name = "mlx-whisper" },
+    { name = "pyannote-audio" },
+    { name = "torch" },
+    { name = "torchaudio" },
 ]
 
 [package.dev-dependencies]
@@ -311,19 +315,20 @@ requires-dist = [
     { name = "fastapi", specifier = ">=0.104.0" },
     { name = "httpx" },
     { name = "jinja2", specifier = ">=3.1.0" },
-    { name = "mlx-whisper", specifier = ">=0.4.3" },
+    { name = "mlx-whisper", marker = "extra == 'transcription'", specifier = ">=0.4.3" },
     { name = "psycopg2-binary" },
-    { name = "pyannote-audio", specifier = ">=3.1.1" },
+    { name = "pyannote-audio", marker = "extra == 'transcription'", specifier = ">=3.1.1" },
     { name = "python-dotenv" },
     { name = "python-multipart" },
     { name = "rich", specifier = ">=13.0.0" },
     { name = "sqlmodel" },
-    { name = "torch" },
-    { name = "torchaudio" },
+    { name = "torch", marker = "extra == 'transcription'" },
+    { name = "torchaudio", marker = "extra == 'transcription'" },
     { name = "uvicorn", specifier = ">=0.24.0" },
     { name = "valkey", specifier = ">=6.1.1" },
     { name = "websockets", specifier = ">=16.0" },
 ]
+provides-extras = ["transcription"]
 
 [package.metadata.requires-dev]
 dev = [
