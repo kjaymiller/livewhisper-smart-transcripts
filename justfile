@@ -2,6 +2,8 @@
 
 set shell := ["bash", "-c"]
 
+db_url := "$(op read 'op://Private/Aiven - Conduit Transcriptions/Connection String')"
+
 # Default recipe - show available commands
 @default:
     just --list
@@ -34,7 +36,7 @@ logs-whisper:
 
 # Access the PostgreSQL database shell directly
 db-shell:
-    docker exec -it conduit-postgres psql -U postgres -d transcripts
+    psql "{{db_url}}"
 
 # ==========================================
 # Application / Transcription Commands
@@ -42,7 +44,7 @@ db-shell:
 
 # Transcribe one or more audio files (e.g. `just transcribe audio1.wav`)
 transcribe +FILES:
-    uv run transcribe {{FILES}}
+    DATABASE_URL="{{db_url}}" uv run app/cli.py transcribe {{FILES}}
 
 # Show CLI transcription help
 help-transcribe:
@@ -50,14 +52,14 @@ help-transcribe:
 
 # List all active, in-progress transcriptions
 active:
-    uv run app/cli.py active
+    DATABASE_URL="{{db_url}}" uv run app/cli.py active
 
 # Clear all stuck or orphaned in-progress transcriptions from the database and Valkey
 clear-active:
     @echo "Clearing stuck transcription keys from Valkey..."
     docker exec conduit-valkey valkey-cli keys "transcription_progress:*" | xargs -I {} docker exec conduit-valkey valkey-cli del "{}" || true
     @echo "Deleting orphaned processing records from PostgreSQL..."
-    docker exec conduit-postgres psql -U postgres -d transcripts -c "DELETE FROM transcription WHERE status = 'processing';"
+    psql "{{db_url}}" -c "DELETE FROM transcription WHERE status = 'processing';"
     @echo "Done."
 
 # ==========================================
