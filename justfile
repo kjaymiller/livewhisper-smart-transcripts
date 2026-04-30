@@ -3,7 +3,7 @@
 set shell := ["bash", "-c"]
 
 db_url := "$(op read 'op://Private/Aiven - Conduit Transcriptions/Connection String')"
-hf_access_token := "$(op://Private/Conduit Transcription/hf_access_token')"
+hf_access_token := "$(op read 'op://Private/Conduit Transcription/hf_access_token')"
 
 # Default recipe - show available commands
 @default:
@@ -45,7 +45,7 @@ db-shell:
 
 # Transcribe one or more audio files (e.g. `just transcribe audio1.wav`)
 transcribe +FILES:
-    DATABASE_URL="{{db_url}}" uv run --frozen app/cli.py transcribe {{FILES}}
+    DATABASE_URL="{{db_url}}" HUGGINGFACE_API_KEY="{{hf_access_token}}" uv run --frozen app/cli.py transcribe {{FILES}}
 
 # Show CLI transcription help
 help-transcribe:
@@ -53,7 +53,7 @@ help-transcribe:
 
 # List all active, in-progress transcriptions
 active:
-    DATABASE_URL="{{db_url}}" uv run --frozen app/cli.py active
+    DATABASE_URL="{{db_url}}" uv run app/cli.py active
 
 # Clear all stuck or orphaned in-progress transcriptions from the database and Valkey
 clear-active:
